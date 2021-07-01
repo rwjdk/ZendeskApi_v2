@@ -1,19 +1,10 @@
-using Newtonsoft.Json;
 using NUnit.Framework;
-using System;
 using System.Collections.Generic;
-using System.Globalization;
-using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using ZendeskApi_v2;
-using ZendeskApi_v2.Extensions;
-using ZendeskApi_v2.Models.Brands;
 using ZendeskApi_v2.Models.Constants;
-using ZendeskApi_v2.Models.Shared;
 using ZendeskApi_v2.Models.Tickets;
-using ZendeskApi_v2.Requests;
 
 namespace Tests
 {
@@ -118,6 +109,64 @@ namespace Tests
                 Assert.That(ticket.Status, Is.EqualTo(pendingStatus));
                 await api.Tickets.DeleteAsync(r.Id);
             }
+        }
+
+        [Test]
+        public async Task CustomDropDownFieldSaveAsync()
+        {
+            var ticket = new Ticket()
+            {
+                Subject = "my printer is on fire",
+                Comment = new Comment { Body = "HELP" },
+                Priority = TicketPriorities.Urgent,
+                CustomFields = new List<CustomField> { new CustomField { Id = Settings.CustomDropDownId, Value = "justwork" } }
+            };
+
+            var resp = api.Tickets.CreateTicket(ticket);
+            var newTicket = resp.Ticket;
+            Assert.That(ticket.CustomFields[0].Value, Is.EqualTo(newTicket.CustomFields.FirstOrDefault(x => x.Id == Settings.CustomDropDownId).Value));
+
+            newTicket.CustomFields.FirstOrDefault(x => x.Id == Settings.CustomDropDownId).Value = "brake_fix";
+
+            var resp2 = await api.Tickets.UpdateTicketAsync(newTicket, new Comment { Body = "Update ticket" });
+            var updateTicket = resp2.Ticket;
+
+            Assert.That(newTicket.CustomFields.FirstOrDefault(x => x.Id == Settings.CustomDropDownId).Value,
+                Is.EqualTo(updateTicket.CustomFields.FirstOrDefault(x => x.Id == Settings.CustomDropDownId).Value));
+
+            Assert.That(api.Tickets.Delete(newTicket.Id.Value), Is.True);
+        }
+        
+        [Test]
+        public async Task CanGetFollowUpIds()
+        {
+            var ticket = new Ticket { Comment = new Comment { Body = "Original ticket", Public = false } };
+
+            var resp1 = await api.Tickets.CreateTicketAsync(ticket);
+
+            var closedTicket = resp1.Ticket;
+
+            closedTicket.Status = TicketStatus.Closed;
+
+            await api.Tickets.UpdateTicketAsync(closedTicket, new Comment { Body = "Closing Original Ticket" });
+
+            var ticket_Followup = new Ticket()
+            {
+                Subject = "I am the follow up Ticket",
+                Comment = new Comment { Body = "I will be linked to the closed ticket" },
+                Priority = TicketPriorities.Low,
+                ViaFollowupSourceId = closedTicket.Id.Value
+            };
+
+            var resp3 = await api.Tickets.CreateTicketAsync(ticket_Followup);
+            var resp4 = api.Tickets.GetTicket(closedTicket.Id.Value);
+
+            Assert.That(resp3.Ticket.Via.Source.Rel, Is.EqualTo("follow_up"));
+            Assert.That(resp4.Ticket.FollowUpIds.Count, Is.EqualTo(1));
+            Assert.That(resp3.Ticket.Id, Is.EqualTo(resp4.Ticket.FollowUpIds.ElementAt(0)));
+
+            Assert.That(await api.Tickets.DeleteAsync(resp3.Ticket.Id.Value), Is.True);
+            Assert.That(await api.Tickets.DeleteAsync(closedTicket.Id.Value), Is.True);
         }
     }
 }

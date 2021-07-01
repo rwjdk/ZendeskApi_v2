@@ -72,6 +72,8 @@ namespace ZendeskApi_v2.Requests
 
         GroupCommentResponse GetTicketComments(long ticketId, int? perPage = null, int? page = null, TicketSideLoadOptionsEnum sideLoadOptions = TicketSideLoadOptionsEnum.None);
 
+        GroupCommentResponse GetTicketComments(long ticketId, bool sortAscending, int? perPage = null, int? page = null, TicketSideLoadOptionsEnum sideLoadOptions = TicketSideLoadOptionsEnum.None);
+
         GroupTicketResponse GetMultipleTickets(IEnumerable<long> ids, TicketSideLoadOptionsEnum sideLoadOptions = TicketSideLoadOptionsEnum.None);
 
         IndividualTicketResponse CreateTicket(Ticket ticket);
@@ -121,9 +123,9 @@ namespace ZendeskApi_v2.Requests
 
         IndividualTicketFieldResponse GetTicketFieldById(long id);
 
-        IndividualTicketFieldResponse CreateTicketField(TicketField ticketField);
+        IndividualTicketFieldResponse CreateTicketField(TicketField ticketField, bool replaceNameSpacesWithUnderscore = true);
 
-        IndividualTicketFieldResponse UpdateTicketField(TicketField ticketField);
+        IndividualTicketFieldResponse UpdateTicketField(TicketField ticketField, bool replaceNameSpacesWithUnderscore = false);
 
         bool DeleteTicketField(long id);
 
@@ -148,6 +150,8 @@ namespace ZendeskApi_v2.Requests
         JobStatusResponse BulkImportTickets(IEnumerable<TicketImport> tickets);
 
         GroupTicketResponse GetTicketsByExternalId(string externalId, int pageNumber = 0, int itemsPerPage = 0, TicketSideLoadOptionsEnum sideLoadOptions = TicketSideLoadOptionsEnum.None);
+
+        JobStatusResponse MergeTickets(long targetTicketId, IEnumerable<long> sourceTicketIds, string targetComment = "", string sourceComment = "", bool targetCommentPublic = false, bool sourceCommentPublic = false);
 
 #endif
 
@@ -174,6 +178,8 @@ namespace ZendeskApi_v2.Requests
         Task<IndividualTicketResponse> GetTicketAsync(long id, TicketSideLoadOptionsEnum sideLoadOptions = TicketSideLoadOptionsEnum.None);
 
         Task<GroupCommentResponse> GetTicketCommentsAsync(long ticketId, int? perPage = null, int? page = null, TicketSideLoadOptionsEnum sideLoadOptions = TicketSideLoadOptionsEnum.None);
+
+        Task<GroupCommentResponse> GetTicketCommentsAsync(long ticketId, bool sortAscending, int? perPage = null, int? page = null, TicketSideLoadOptionsEnum sideLoadOptions = TicketSideLoadOptionsEnum.None);
 
         Task<GroupTicketResponse> GetMultipleTicketsAsync(IEnumerable<long> ids, TicketSideLoadOptionsEnum sideLoadOptions = TicketSideLoadOptionsEnum.None);
 
@@ -220,9 +226,9 @@ namespace ZendeskApi_v2.Requests
 
         Task<IndividualTicketFieldResponse> GetTicketFieldByIdAsync(long id);
 
-        Task<IndividualTicketFieldResponse> CreateTicketFieldAsync(TicketField ticketField);
+        Task<IndividualTicketFieldResponse> CreateTicketFieldAsync(TicketField ticketField, bool replaceNameSpacesWithUnderscore = true);
 
-        Task<IndividualTicketFieldResponse> UpdateTicketFieldAsync(TicketField ticketField);
+        Task<IndividualTicketFieldResponse> UpdateTicketFieldAsync(TicketField ticketField, bool replaceNameSpacesWithUnderscore = false);
 
         Task<bool> DeleteTicketFieldAsync(long id);
 
@@ -259,6 +265,8 @@ namespace ZendeskApi_v2.Requests
         Task<IndividualTicketResponse> ImportTicketAsync(TicketImport ticket);
 
         Task<JobStatusResponse> BulkImportTicketsAsync(IEnumerable<TicketImport> tickets);
+
+        Task<JobStatusResponse> MergeTicketsAsync(long targetTicketId, IEnumerable<long> sourceTicketIds, string targetComment = "", string sourceComment = "", bool targetCommentPublic = false, bool sourceCommentPublic = false);
 
 #endif
     }
@@ -388,6 +396,12 @@ namespace ZendeskApi_v2.Requests
             return GenericPagedGet<GroupCommentResponse>(resource, perPage, page);
         }
 
+        public GroupCommentResponse GetTicketComments(long ticketId, bool sortAscending, int? perPage = null, int? page = null, TicketSideLoadOptionsEnum sideLoadOptions = TicketSideLoadOptionsEnum.None)
+        {
+            var resource = GetResourceStringWithSideLoadOptionsParam($"{_tickets}/{ticketId}/comments.json", sideLoadOptions);
+            return GenericPagedSortedGet<GroupCommentResponse>(resource, perPage, page, sortAscending: sortAscending);
+        }
+
         public GroupTicketResponse GetMultipleTickets(IEnumerable<long> ids, TicketSideLoadOptionsEnum sideLoadOptions = TicketSideLoadOptionsEnum.None)
         {
             var resource = GetResourceStringWithSideLoadOptionsParam($"{_tickets}/show_many.json?ids={ids.ToCsv()}", sideLoadOptions);
@@ -459,6 +473,31 @@ namespace ZendeskApi_v2.Requests
         {
             return GenericDelete($"{_tickets}/destroy_many.json?ids={ids.ToCsv()}");
         }
+
+        /// <summary>
+        /// Merges the source tickets in the "ids" list into the target ticket with comments as defined.
+        /// </summary>
+        /// <param name="targetTicketId">Id of ticket to be merged into.</param>
+        /// <param name="sourceTicketIds">List of ids of source tickets to be merged from.</param>
+        /// <param name="targetComment">Private comment to add to the target ticket (optional but recommended)</param>
+        /// <param name="sourceComment">Private comment to add to the source ticket(s) (optional but recommended)</param>
+        /// <param name="targetCommentPublic">Whether comment in target ticket is public or private (default = private)</param>
+        /// <param name="sourceCommentPublic">Whether comment in source ticket is public or private (default = private)</param>
+        /// <returns>JobStatusResponse</returns>
+        public JobStatusResponse MergeTickets(long targetTicketId, IEnumerable<long> sourceTicketIds, string targetComment = "", string sourceComment = "", bool targetCommentPublic = false, bool sourceCommentPublic = false)
+        {
+            return GenericPost<JobStatusResponse>(
+                $"{_tickets}/{targetTicketId}/merge.json",
+                new
+                {
+                    ids = sourceTicketIds,
+                    target_comment = targetComment,
+                    source_comment = sourceComment,
+                    target_comment_is_public = targetCommentPublic,
+                    source_comment_is_public = sourceCommentPublic
+                });
+        }
+
 
         public GroupUserResponse GetCollaborators(long id)
         {
@@ -561,13 +600,14 @@ namespace ZendeskApi_v2.Requests
             return GenericGet<IndividualTicketFieldResponse>($"ticket_fields/{id}.json");
         }
 
-        public IndividualTicketFieldResponse CreateTicketField(TicketField ticketField)
+        public IndividualTicketFieldResponse CreateTicketField(TicketField ticketField, bool replaceNameSpacesWithUnderscore = true)
         {
             if (ticketField.CustomFieldOptions != null)
             {
                 foreach (var custom in ticketField.CustomFieldOptions)
                 {
-                    custom.Name = custom.Name.Replace(' ', '_');
+                    if (replaceNameSpacesWithUnderscore)
+                        custom.Name = custom.Name.Replace(' ', '_');
                     custom.Value = custom.Value.Replace(' ', '_');
                 }
             }
@@ -579,8 +619,18 @@ namespace ZendeskApi_v2.Requests
             return res;
         }
 
-        public IndividualTicketFieldResponse UpdateTicketField(TicketField ticketField)
+        public IndividualTicketFieldResponse UpdateTicketField(TicketField ticketField, bool replaceNameSpacesWithUnderscore = false)
         {
+            if (ticketField.CustomFieldOptions != null)
+            {
+                foreach (var custom in ticketField.CustomFieldOptions)
+                {
+                    if (replaceNameSpacesWithUnderscore)
+                        custom.Name = custom.Name.Replace(' ', '_');
+                    custom.Value = custom.Value.Replace(' ', '_');
+                }
+            }
+
             return GenericPut<IndividualTicketFieldResponse>($"ticket_fields/{ticketField.Id}.json", new
             {
                 ticket_field = ticketField
@@ -707,6 +757,12 @@ namespace ZendeskApi_v2.Requests
         {
             var resource = GetResourceStringWithSideLoadOptionsParam($"{_tickets}/{ticketId}/comments.json", sideLoadOptions);
             return await GenericPagedGetAsync<GroupCommentResponse>(resource, perPage, page);
+        }
+
+        public async Task<GroupCommentResponse> GetTicketCommentsAsync(long ticketId, bool sortAscending, int? perPage = null, int? page = null, TicketSideLoadOptionsEnum sideLoadOptions = TicketSideLoadOptionsEnum.None)
+        {
+            var resource = GetResourceStringWithSideLoadOptionsParam($"{_tickets}/{ticketId}/comments.json", sideLoadOptions);
+            return await GenericPagedSortedGetAsync<GroupCommentResponse>(resource, perPage, page, sortAscending: sortAscending);
         }
 
         public async Task<GroupTicketResponse> GetMultipleTicketsAsync(IEnumerable<long> ids, TicketSideLoadOptionsEnum sideLoadOptions = TicketSideLoadOptionsEnum.None)
@@ -842,13 +898,14 @@ namespace ZendeskApi_v2.Requests
             return await GenericGetAsync<IndividualTicketFieldResponse>($"ticket_fields/{id}.json");
         }
 
-        public async Task<IndividualTicketFieldResponse> CreateTicketFieldAsync(TicketField ticketField)
+        public async Task<IndividualTicketFieldResponse> CreateTicketFieldAsync(TicketField ticketField, bool replaceNameSpacesWithUnderscore = true)
         {
             if (ticketField.CustomFieldOptions != null)
             {
                 foreach (var custom in ticketField.CustomFieldOptions)
                 {
-                    custom.Name = custom.Name.Replace(' ', '_');
+                    if (replaceNameSpacesWithUnderscore)
+                        custom.Name = custom.Name.Replace(' ', '_');
                     custom.Value = custom.Value.Replace(' ', '_');
                 }
             }
@@ -860,8 +917,17 @@ namespace ZendeskApi_v2.Requests
             return await res;
         }
 
-        public async Task<IndividualTicketFieldResponse> UpdateTicketFieldAsync(TicketField ticketField)
+        public async Task<IndividualTicketFieldResponse> UpdateTicketFieldAsync(TicketField ticketField, bool replaceNameSpacesWithUnderscore = false)
         {
+            if (ticketField.CustomFieldOptions != null)
+            {
+                foreach (var custom in ticketField.CustomFieldOptions)
+                {
+                    if (replaceNameSpacesWithUnderscore)
+                        custom.Name = custom.Name.Replace(' ', '_');
+                    custom.Value = custom.Value.Replace(' ', '_');
+                }
+            }
 
             return await GenericPutAsync<IndividualTicketFieldResponse>($"ticket_fields/{ticketField.Id}.json", new
             {
@@ -942,6 +1008,31 @@ namespace ZendeskApi_v2.Requests
         {
             return await GenericDeleteAsync($"{_ticket_forms}/{id}.json");
         }
+
+        /// <summary>
+        /// Merges the source tickets in the "ids" list into the target ticket with comments as defined.
+        /// </summary>
+        /// <param name="targetTicketId">Id of ticket to be merged into.</param>
+        /// <param name="sourceTicketIds">List of ids of source tickets to be merged from.</param>
+        /// <param name="targetComment">Private comment to add to the target ticket (optional but recommended)</param>
+        /// <param name="sourceComment">Private comment to add to the source ticket(s) (optional but recommended)</param>
+        /// <param name="targetCommentPublic">Whether comment in target ticket is public or private (default = private)</param>
+        /// <param name="sourceCommentPublic">Whether comment in source ticket is public or private (default = private)</param>
+        /// <returns>JobStatusResponse</returns>
+        public async Task<JobStatusResponse> MergeTicketsAsync(long targetTicketId, IEnumerable<long> sourceTicketIds, string targetComment = "", string sourceComment = "", bool targetCommentPublic = false, bool sourceCommentPublic = false)
+        {
+            return await GenericPostAsync<JobStatusResponse>(
+                $"{_tickets}/{targetTicketId}/merge.json",
+                new
+                {
+                    ids = sourceTicketIds,
+                    target_comment = targetComment,
+                    source_comment = sourceComment,
+                    target_comment_is_public = targetCommentPublic,
+                    source_comment_is_public = sourceCommentPublic,
+                });
+        }
+
 
         #region TicketMetrics
 

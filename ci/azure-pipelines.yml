@@ -5,13 +5,16 @@
 
 resources:
 - repo: self
-queue:
-  name: Hosted VS2017
 variables:
-  BuildConfiguration: 'Release'
-  System.Debug: true
-  DOTNET_CLI_TELEMETRY_OPTOUT: true
-  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  - name: BuildConfiguration
+    value: 'Release'
+  - name: System.Debug
+    value: true
+  - name: DOTNET_CLI_TELEMETRY_OPTOUT
+    value: true
+  - name: DOTNET_SKIP_FIRST_TIME_EXPERIENCE
+    value: true
+  - group: GitHub_Feed
 
 trigger:
   batch: true
@@ -27,43 +30,138 @@ pr:
     exclude:
     - docs/*
 
-steps:
-- task: DotNetCoreInstaller@0
-  displayName: 'Use .NET Core sdk 2.1.502'
-  inputs:
-    version: 2.1.502
+pool:
+  vmImage: 'windows-latest'
 
-- task: DotNetCoreCLI@2
-  displayName: 'dotnet build'
-  inputs:
-    command: build
-    projects: 'src/ZendeskApi_v2.sln'
-    arguments: '-c $(BuildConfiguration)'
+jobs:
+- job: Build
+  displayName: Build and Test
+  steps:
+  - task: UseDotNet@2
+    displayName: 'Use .NET Core sdk'
+    inputs:
+      packageType: sdk
+      version: 3.0.103
+      installationPath: $(Agent.ToolsDirectory)/dotnet
 
-- task: DotNetCoreCLI@2
-  displayName: 'dotnet test'
-  inputs:
-    command: test
-    projects: 'test/ZendeskApi_v2.Test/ZendeskApi_v2.Test.csproj'
-    arguments: '--no-build -c $(BuildConfiguration)'
+  - task: DotNetCoreCLI@2
+    displayName: 'dotnet build'
+    inputs:
+      command: build
+      projects: 'src/ZendeskApi_v2.sln'
+      arguments: '-c $(BuildConfiguration)'
 
-- task: DotNetCoreCLI@2
-  displayName: 'dotnet pack'
-  inputs:
-    command: pack
-    searchPatternPack: 'src/ZendeskApi_v2/ZendeskApi_v2.csproj'
-    nobuild: true
+  - task: DotNetCoreCLI@2
+    displayName: 'dotnet test'
+    inputs:
+      command: test
+      projects: 'test/ZendeskApi_v2.Test/ZendeskApi_v2.Test.csproj'
+      arguments: '--no-build -c $(BuildConfiguration)'
 
-- task: PowerShell@2
-  inputs:
-    filePath: .\ci\sign-package.ps1
-  env:
-    SignClientUser: $(speedygeek.signClientUser)
-    SignClientSecret: $(speedygeek.signClientSecret)
-  displayName: 'Authenticode sign packages'
-  condition: and(succeeded(), ne(variables['speedygeek.signClientUser'], ''), ne(variables['speedygeek.signClientSecret'], ''))
+  - task: DotNetCoreCLI@2
+    displayName: 'dotnet pack'
+    inputs:
+      command: pack
+      searchPatternPack: 'src/ZendeskApi_v2/ZendeskApi_v2.csproj'
+      nobuild: true
 
-- task: PublishBuildArtifacts@1
-  displayName: 'Publish Artifact: Nuget_Package'
-  inputs:
-    ArtifactName: 'Nuget_Package'
+  - task: PowerShell@2
+    inputs:
+      filePath: .\ci\sign-package.ps1
+    env:
+      SignClientUser: $(speedygeek.signClientUser)
+      SignClientSecret: $(speedygeek.signClientSecret)
+    displayName: 'Authenticode sign packages'
+    condition: and(succeeded(), ne(variables['speedygeek.signClientUser'], ''), ne(variables['speedygeek.signClientSecret'], ''))
+
+  - task:  PublishPipelineArtifact@1
+    displayName: 'Publish Artifact: Nuget_Package'
+    inputs:
+      TargetPath:  '$(Build.ArtifactStagingDirectory)'
+      ArtifactName: 'Nuget_Package'
+
+- job: Publish
+  displayName: Publish Nuget packages
+  dependsOn: Build
+  condition: and(succeeded(),or(eq(variables['Build.SourceBranch'], 'refs/heads/master'), startsWith(variables['Build.SourceBranch'], 'refs/tags/v3.')))
+  steps:
+  - checkout: none
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      path: $(Pipeline.Workspace)/Nuget_Package
+      artifact: 'Nuget_Package'
+
+  - task: PowerShell@2
+    displayName: 'Is Pre-release'
+    inputs:
+      targetType: inline
+      pwsh: true
+      script: |
+        $buildNumber = $env:Build_BuildNumber
+
+        $IsPrerelease = $false;
+        if( $buildNumber.Contains("-") -or $buildNumber.Contains("+")){
+          $IsPrerelease = $true;
+        }
+
+        Write-Host "IsPrerelease: $IsPrerelease "
+        Write-Host "##vso[task.setvariable variable=IsPrerelease]$IsPrerelease"
+
+        $date=$(Get-Date -Format "dd MMMM yyyy");
+        Write-Host "##vso[task.setvariable variable=ReleaseDate]$date"
+
+  #- task: NuGetCommand@2
+  #  displayName: 'GitHub Feed (Pre-release)'
+  #  condition: and(succeeded(),eq(variables['IsPrerelease'] ,'True'))
+  #  inputs:
+  #    command: push
+  #    packagesToPush: '$(Pipeline.Workspace)/**/*.nupkg;!$(Pipeline.Workspace)/**/*.symbols.nupkg'
+  #    nuGetFeedType: external
+  #    publishFeedCredentials: 'Github Nuget Feed'
+  - task: PowerShell@2
+    displayName: 'GitHub Feed (Pre-release)'
+    condition: and(succeeded(),eq(variables['IsPrerelease'] ,'True'))
+    env:
+      apikey: $(github_feed_apikey)
+    inputs:
+      targetType: inline
+      script: |
+        Write-Host -ForegroundColor Cyan "starting github push"
+        $api = "$Env:apikey"
+        $url =  "$Env:github_feed_url"
+        Write-Host -ForegroundColor Cyan "Feed url $url"
+        Write-Host -ForegroundColor Cyan "api key length is " $api.Length
+        dotnet nuget push "$(Pipeline.Workspace)/**/*.nupkg" --no-symbols true --skip-duplicate -k "$api"  -s "$url"
+
+      showWarnings: true
+      pwsh: true
+
+  - task: NuGetCommand@2
+    displayName: 'MyGet Feed (Pre-release)'
+    condition: and(succeeded(), eq(variables['IsPrerelease'] ,'True'))
+    inputs:
+      command: push
+      packagesToPush: '$(Pipeline.Workspace)/**/*.nupkg;!$(Pipeline.Workspace)/**/*.symbols.nupkg'
+      nuGetFeedType: external
+      publishFeedCredentials: MyGet
+
+  - task: NuGetCommand@2
+    displayName: 'NuGet push'
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v3.'),eq(variables['IsPrerelease'] ,'False'))
+    inputs:
+      command: push
+      packagesToPush: '$(Pipeline.Workspace)/**/*.nupkg;!$(Pipeline.Workspace)/**/*.symbols.nupkg'
+      nuGetFeedType: external
+      publishFeedCredentials: Nuget.org
+
+  - task: GitHubRelease@1
+    displayName: 'Create GitHub Release'
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/v3.'),eq(variables['IsPrerelease'] ,'False'))
+    inputs:
+      gitHubConnection: Github
+      repositoryName: 'Speedygeek/ZendeskApi_v2'
+      tagSource: gitTag
+      title: '$(Build.BuildNumber) ($(ReleaseDate))'
+      releaseNotesSource: inline
+      assets: '$(Pipeline.Workspace)/**/*.nupkg'
+      isDraft: true

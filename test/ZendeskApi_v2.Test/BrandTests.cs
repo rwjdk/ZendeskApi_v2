@@ -30,14 +30,14 @@ namespace Tests
         public void CanGetBrands()
         {
             var res = api.Brands.GetBrands();
-            Assert.Greater(res.Count, 0);
+            Assert.That(res.Count, Is.GreaterThan(0));
 
             var ind = api.Brands.GetBrand(res.Brands[0].Id.Value);
-            Assert.AreEqual(ind.Brand.Id, res.Brands[0].Id);            
+            Assert.That(res.Brands[0].Id, Is.EqualTo(ind.Brand.Id));
         }
 
         [Test]
-        public void CanCreateUpdateAndDeleteTriggers()
+        public void CanCreateUpdateAndDeleteBrand()
         {
             var brand = new Brand()
             {
@@ -48,14 +48,14 @@ namespace Tests
 
             var res = api.Brands.CreateBrand(brand);
 
-            Assert.Greater(res.Brand.Id, 0);
+            Assert.That(res.Brand.Id, Is.GreaterThan(0));
 
             res.Brand.Name = "Test Brand Updated";
-            var update        = api.Brands.UpdateBrand(res.Brand);
-            Assert.AreEqual(update.Brand.Name, res.Brand.Name);
+            var update = api.Brands.UpdateBrand(res.Brand);
+            Assert.That(res.Brand.Name, Is.EqualTo(update.Brand.Name));
 
-            Assert.True(api.Brands.DeleteBrand(res.Brand.Id.Value));
+            Assert.That(api.Brands.DeleteBrand(res.Brand.Id.Value), Is.True);
         }
-      
+
     }
 }
